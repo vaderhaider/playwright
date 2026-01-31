@@ -137,60 +137,9 @@ async function fillDateField(page, dateValue) {
 }
 
 async function selectTimePreference(page, timePreference) {
-  // This form uses Kendo UI dropdowns - try keyboard navigation approach
+  // For stability, always keep the default "Any time" option.
+  console.log(`  ⏰ Time preference requested: "${timePreference}" – keeping default "Any time" selection.`);
   await page.waitForTimeout(500);
-  
-  // Find only VISIBLE Kendo dropdown triggers
-  const allDropdowns = await page.locator('span.k-dropdown-wrap, span.k-picker-wrap').all();
-  const visibleDropdowns = [];
-  
-  for (const dropdown of allDropdowns) {
-    if (await dropdown.isVisible()) {
-      visibleDropdowns.push(dropdown);
-    }
-  }
-  
-  console.log(`  🔍 Found ${visibleDropdowns.length} VISIBLE Kendo dropdowns (${allDropdowns.length} total)`);
-  
-  // Index 1 should be Time (0=Date, 1=Time)
-  if (visibleDropdowns.length >= 2) {
-    console.log('  🖱️  Focusing on Time dropdown...');
-    
-    // Focus on the dropdown
-    await visibleDropdowns[1].click();
-    await page.waitForTimeout(500);
-    
-    // Map time preferences to key presses
-    const timeOptions = {
-      'Any time': 0,
-      'Morning (before noon)': 1,
-      'Afternoon (noon - 5pm)': 2,
-      'Evening (after 5pm)': 3
-    };
-    
-    const optionIndex = timeOptions[timePreference] ?? 0;
-    
-    console.log(`  ⌨️  Using keyboard to select option ${optionIndex}...`);
-    
-    // Open dropdown with Alt+Down or just Down arrow
-    await page.keyboard.press('ArrowDown');
-    await page.waitForTimeout(300);
-    
-    // Navigate to the desired option
-    for (let i = 0; i < optionIndex; i++) {
-      await page.keyboard.press('ArrowDown');
-      await page.waitForTimeout(100);
-    }
-    
-    // Select with Enter
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(500);
-    
-    console.log(`  ✓ Time preference set using keyboard navigation`);
-    return;
-  }
-  
-  console.log('  ⚠️  Could not find Kendo time preference dropdown');
 }
 
 async function selectFromDropdown(page, labelText, optionText) {
@@ -310,6 +259,7 @@ async function selectTimeSlot(page, slotIndex) {
   }
   
   console.log('  ⚠️  Could not find time slots to click');
+  throw new Error('No available time slots could be selected for the chosen criteria.');
 }
 
 async function fillCustomerInfo(page, customerInfo) {
@@ -372,6 +322,7 @@ async function fillCustomerInfo(page, customerInfo) {
     console.log('  ✓ Clicked Continue');
   } else {
     console.log('  ⚠️  Continue button not found after filling customer info');
+    throw new Error('Continue button not found after filling customer information; cannot proceed to booking confirmation.');
   }
 }
 
@@ -401,6 +352,7 @@ async function submitBooking(page) {
   }
   
   console.log('  ⚠️  Submit button not found - form may be ready but not submitted');
+  throw new Error('Submit button not found; booking could not be finalized.');
 }
 
 // If this file is run directly via `node booking-script.js`, execute once
