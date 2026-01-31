@@ -128,7 +128,11 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { status: 'success' });
     } catch (err) {
       console.error('Booking automation failed:', err);
-      return sendJson(res, 500, { status: 'error', message: 'Booking automation failed', details: err.message });
+      return sendJson(res, 200, {
+        status: 'failed',
+        message: 'Booking automation failed',
+        details: err.message
+      });
     }
   });
 });
