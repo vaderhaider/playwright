@@ -103,18 +103,17 @@ const server = http.createServer(async (req, res) => {
 
     const configOverrides = {
       date: normalizedDate,
-      // We currently keep the default "Any time" in the UI, but
-      // record the requested time in notes so you can see it.
       timePreference: 'Any time',
       service: parsed.service,
       employee: parsed.employee || 'First Available',
-      timeSlotIndex: 0,
+      specificTime: parsed.time || null, // Pass the specific time to select (e.g., "02:00 PM")
+      timeSlotIndex: 0, // Fallback if specific time not found
       customerInfo: {
         firstName: parsed.firstName,
         lastName: parsed.lastName,
         email: parsed.email,
         phone: normalizedPhone,
-        notes: parsed.time ? `Requested time: ${parsed.time}` : ''
+        notes: ''
       },
       // Allow overriding headless/slowMo through payload or env
       headless: typeof parsed.headless === 'boolean' ? parsed.headless : process.env.HEADLESS === 'true',

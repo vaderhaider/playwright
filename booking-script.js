@@ -12,6 +12,7 @@ const DEFAULT_BOOKING_CONFIG = {
   
   // After showing times, which slot to pick (0 = first available)
   timeSlotIndex: 0,
+  specificTime: null, // Specific time to select (e.g., '02:00 PM'), or null to use timeSlotIndex
   
   // Customer information (filled on next page after selecting time)
   customerInfo: {
@@ -33,6 +34,7 @@ async function bookAppointment(configOverrides = {}) {
   console.log('🎯 Starting DaySmart Salon booking automation...');
   console.log('📋 Booking request details:', {
     date: BOOKING_CONFIG.date,
+    specificTime: BOOKING_CONFIG.specificTime || 'Not specified (will use index)',
     timePreference: BOOKING_CONFIG.timePreference,
     service: BOOKING_CONFIG.service,
     employee: BOOKING_CONFIG.employee,
@@ -88,7 +90,7 @@ async function bookAppointment(configOverrides = {}) {
     
     // Select a time slot
     console.log('🕐 Selecting time slot...');
-    await selectTimeSlot(page, BOOKING_CONFIG.timeSlotIndex);
+    await selectTimeSlot(page, BOOKING_CONFIG.timeSlotIndex, BOOKING_CONFIG.specificTime);
     
     await page.waitForTimeout(2000);
 
@@ -213,53 +215,178 @@ async function selectFromDropdown(page, labelText, optionText) {
   console.log(`  ⚠️  Could not find ${labelText} dropdown`);
 }
 
-async function selectTimeSlot(page, slotIndex) {
+async function selectTimeSlot(page, slotIndex, specificTime = null) {
   // After clicking "Show Available Times", time slots appear
   // Look for clickable time elements (buttons or links)
   
   await page.waitForTimeout(2000);
   
-  // Try different selectors for time slots
+  // Normalize the requested time for comparison
+  const normalizeTime = (timeStr) => {
+    if (!timeStr) return null;
+    // Remove extra spaces, normalize AM/PM
+    return timeStr
+      .trim()
+      .replace(/\s+/g, ' ')
+      .replace(/([0-9]):([0-9])/, '$1:$2')
+      .toUpperCase()
+      .replace('AM', ' AM')
+      .replace('PM', ' PM')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+  
+  // Convert time string to minutes since midnight for comparison
+  const timeToMinutes = (timeStr) => {
+    if (!timeStr) return null;
+    const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (!match) return null;
+    let hours = parseInt(match[1], 10);
+    const minutes = parseInt(match[2], 10);
+    const period = match[3].toUpperCase();
+    
+    // Convert to 24-hour format
+    if (period === 'PM' && hours !== 12) {
+      hours += 12;
+    } else if (period === 'AM' && hours === 12) {
+      hours = 0;
+    }
+    
+    return hours * 60 + minutes;
+  };
+  
+  const requestedTime = normalizeTime(specificTime);
+  const requestedMinutes = timeToMinutes(specificTime);
+  console.log(`  🎯 Looking for specific time: ${requestedTime || 'any (index ' + slotIndex + ')'}`);
+  
+  // Collect all potential time slot elements
   const timeSelectors = [
-    'button:has-text("AM")',
-    'button:has-text("PM")',
-    'a:has-text("AM")',
-    'a:has-text("PM")',
+    'a.button.booking-event:has-text("AM"), a.button.booking-event:has-text("PM")',
+    'button:has-text("AM"), button:has-text("PM")',
+    'a:has-text("AM"), a:has-text("PM")',
     'div[role="button"]:has-text(":")',
     '[class*="time-slot"]',
     '[class*="timeSlot"]',
     '[class*="appointment-time"]'
   ];
   
+  let allTimeSlots = [];
+  
   for (const selector of timeSelectors) {
     try {
       const slots = await page.locator(selector).all();
       if (slots.length > 0) {
-        const slotToClick = slots[Math.min(slotIndex, slots.length - 1)];
-        const text = await slotToClick.textContent();
-        console.log(`  🖱️  Clicking time slot: ${text?.trim()}`);
-        await slotToClick.click();
-        await page.waitForTimeout(1000);
-        return;
+        allTimeSlots = slots;
+        console.log(`  📋 Found ${slots.length} time slots using selector: ${selector}`);
+        break;
       }
     } catch (e) {
       continue;
     }
   }
   
-  // Fallback: click any visible button that's not "Show Available Times"
-  const buttons = await page.locator('button:visible').all();
-  for (const btn of buttons) {
-    const text = await btn.textContent();
-    if (text && !text.includes('Show Available') && (text.includes(':') || text.includes('AM') || text.includes('PM'))) {
-      console.log(`  🖱️  Clicking time: ${text.trim()}`);
-      await btn.click();
-      return;
+  // Fallback: find any visible elements that look like times
+  if (allTimeSlots.length === 0) {
+    const buttons = await page.locator('button:visible, a.button:visible').all();
+    for (const btn of buttons) {
+      const text = await btn.textContent();
+      if (text && !text.includes('Show Available') && (text.includes(':') || text.includes('AM') || text.includes('PM'))) {
+        allTimeSlots.push(btn);
+      }
     }
+    console.log(`  📋 Found ${allTimeSlots.length} time slots using fallback method`);
   }
   
-  console.log('  ⚠️  Could not find time slots to click');
-  throw new Error('No available time slots could be selected for the chosen criteria.');
+  if (allTimeSlots.length === 0) {
+    console.log('  ⚠️  Could not find any time slots');
+    throw new Error('No available time slots could be selected for the chosen criteria.');
+  }
+  
+  // Build array of slot info with their times in minutes
+  const slotInfos = [];
+  console.log('  📋 Available time slots:');
+  for (let i = 0; i < allTimeSlots.length; i++) {
+    const text = await allTimeSlots[i].textContent();
+    const minutes = timeToMinutes(text);
+    slotInfos.push({ index: i, text: text?.trim(), minutes, element: allTimeSlots[i] });
+    console.log(`     [${i}] ${text?.trim()} (${minutes !== null ? minutes + ' mins' : 'N/A'})`);
+  }
+  
+  // If a specific time is requested, try to find it
+  if (requestedTime) {
+    // First, try exact match
+    for (const slot of slotInfos) {
+      const normalizedSlotText = normalizeTime(slot.text);
+      
+      // Check for exact match or partial match
+      if (normalizedSlotText === requestedTime || 
+          normalizedSlotText?.includes(requestedTime) ||
+          requestedTime?.includes(normalizedSlotText)) {
+        console.log(`  ✓ Found exact matching time slot: ${slot.text}`);
+        await slot.element.click();
+        await page.waitForTimeout(1000);
+        return;
+      }
+    }
+    
+    // Try a more flexible match (just hour and AM/PM)
+    const hourMatch = requestedTime.match(/(\d{1,2}):\d{2}\s*(AM|PM)/i);
+    if (hourMatch) {
+      const requestedHour = hourMatch[1];
+      const requestedPeriod = hourMatch[2].toUpperCase();
+      
+      for (const slot of slotInfos) {
+        const slotMatch = slot.text?.match(/(\d{1,2}):\d{2}\s*(AM|PM)/i);
+        if (slotMatch) {
+          const slotHour = slotMatch[1];
+          const slotPeriod = slotMatch[2].toUpperCase();
+          
+          if (slotHour === requestedHour && slotPeriod === requestedPeriod) {
+            console.log(`  ✓ Found time slot matching hour: ${slot.text}`);
+            await slot.element.click();
+            await page.waitForTimeout(1000);
+            return;
+          }
+        }
+      }
+    }
+    
+    // No exact match found - find the closest available time
+    if (requestedMinutes !== null) {
+      console.log(`  ⏰ Exact time "${specificTime}" not available, searching for closest slot...`);
+      
+      // Filter slots that have valid times and calculate differences
+      const slotsWithDiff = slotInfos
+        .filter(slot => slot.minutes !== null)
+        .map(slot => ({
+          ...slot,
+          diff: Math.abs(slot.minutes - requestedMinutes)
+        }))
+        .sort((a, b) => a.diff - b.diff);
+      
+      if (slotsWithDiff.length > 0) {
+        const closest = slotsWithDiff[0];
+        const diffMinutes = closest.diff;
+        const diffHours = Math.floor(diffMinutes / 60);
+        const diffMins = diffMinutes % 60;
+        const diffStr = diffHours > 0 ? `${diffHours}h ${diffMins}m` : `${diffMins}m`;
+        
+        console.log(`  ✓ Found closest time slot: ${closest.text} (${diffStr} from requested time)`);
+        await closest.element.click();
+        await page.waitForTimeout(1000);
+        return;
+      }
+    }
+    
+    console.log(`  ⚠️  Could not find suitable time slot, falling back to index ${slotIndex}`);
+  }
+  
+  // Fallback to index-based selection
+  const slotToClick = allTimeSlots[Math.min(slotIndex, allTimeSlots.length - 1)];
+  const text = await slotToClick.textContent();
+  console.log(`  🖱️  Clicking time slot at index ${slotIndex}: ${text?.trim()}`);
+  await slotToClick.click();
+  await page.waitForTimeout(1000);
 }
 
 async function fillCustomerInfo(page, customerInfo) {
@@ -327,8 +454,17 @@ async function fillCustomerInfo(page, customerInfo) {
 }
 
 async function submitBooking(page) {
-  // Look for submit button
+  // Wait for the confirmation page to load
+  await page.waitForTimeout(1500);
+  
+  // Look for submit button - the actual button is an <a> tag with id="confirm"
   const submitSelectors = [
+    'a#confirm.booking-event[data-submit="true"]',
+    'a.booking-event:has-text("Submit Request")',
+    'a.booking-event:has-text("Submit")',
+    'a.button:has-text("Submit")',
+    'a.button:has-text("Confirm")',
+    'button:has-text("Submit Request")',
     'button:has-text("Book")',
     'button:has-text("Confirm")',
     'button:has-text("Submit")',
@@ -342,8 +478,9 @@ async function submitBooking(page) {
       const btn = page.locator(selector).first();
       if (await btn.count() > 0) {
         const text = await btn.textContent();
-        console.log(`  🖱️  Clicking: ${text?.trim() || 'Submit'}`);
+        console.log(`  🖱️  Found submit button: ${text?.trim() || 'Submit'}`);
         await btn.click();
+        console.log('  ✓ Clicked submit button');
         return;
       }
     } catch (e) {
