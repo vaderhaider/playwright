@@ -457,6 +457,17 @@ async function submitBooking(page) {
   // Wait for the confirmation page to load
   await page.waitForTimeout(1500);
   
+  // Uncheck the "create account" checkbox if it's checked
+  const createAcctCheckbox = page.locator('input#create-acct[type="checkbox"]');
+  if (await createAcctCheckbox.count() > 0) {
+    const isChecked = await createAcctCheckbox.isChecked();
+    if (isChecked) {
+      console.log('  ☑️  Unchecking "create account" checkbox...');
+      await createAcctCheckbox.uncheck();
+      console.log('  ✓ Checkbox unchecked');
+    }
+  }
+  
   // Look for submit button - the actual button is an <a> tag with id="confirm"
   const submitSelectors = [
     'a#confirm.booking-event[data-submit="true"]',
