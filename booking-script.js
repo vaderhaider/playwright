@@ -107,8 +107,8 @@ async function bookAppointment(configOverrides = {}) {
     console.log('🎉 Booking completed! Confirmation page should now be visible.');
     
     // Keep browser open for verification
-    console.log('⏸️  Browser will stay open for 20 seconds...');
-    await page.waitForTimeout(20000);
+    console.log('⏸️  Browser will stay open for 5 seconds...');
+    await page.waitForTimeout(5000);
     
   } catch (error) {
     console.error('❌ Error during booking:', error);
@@ -311,11 +311,43 @@ async function selectTimeSlot(page, slotIndex, specificTime = null) {
     slotInfos.push({ index: i, text: text?.trim(), minutes, element: allTimeSlots[i] });
     console.log(`     [${i}] ${text?.trim()} (${minutes !== null ? minutes + ' mins' : 'N/A'})`);
   }
+
+  // Apply 15-minute threshold filter - exclude slots exceeding 15 minutes duration
+  const SLOT_DURATION_THRESHOLD = 15; // minutes
+  const filteredSlotInfos = [];
+  
+  for (let i = 0; i < slotInfos.length; i++) {
+    const currentSlot = slotInfos[i];
+    let slotDuration = SLOT_DURATION_THRESHOLD; // Default to threshold if can't determine duration
+    
+    // Try to determine slot duration by checking the next slot's time
+    if (i < slotInfos.length - 1 && currentSlot.minutes !== null && slotInfos[i + 1].minutes !== null) {
+      slotDuration = slotInfos[i + 1].minutes - currentSlot.minutes;
+    }
+    
+    // If we can't determine duration or it's within threshold, include the slot
+    if (slotDuration <= SLOT_DURATION_THRESHOLD) {
+      filteredSlotInfos.push(currentSlot);
+    } else {
+      console.log(`     ⚠️  Excluding slot [${currentSlot.index}] ${currentSlot.text} (duration: ${slotDuration} mins > ${SLOT_DURATION_THRESHOLD} min threshold)`);
+    }
+  }
+  
+  console.log(`  🕐 After applying ${SLOT_DURATION_THRESHOLD}-minute threshold: ${filteredSlotInfos.length}/${slotInfos.length} slots remaining`);
+  
+  // Update slotInfos to use filtered results
+  const finalSlotInfos = filteredSlotInfos;
+  
+  // Check if we have any slots left after filtering
+  if (finalSlotInfos.length === 0) {
+    console.log('  ⚠️  No time slots available within the 15-minute duration threshold');
+    throw new Error('No available time slots found within the 15-minute duration threshold.');
+  }
   
   // If a specific time is requested, try to find it
   if (requestedTime) {
     // First, try exact match
-    for (const slot of slotInfos) {
+    for (const slot of finalSlotInfos) {
       const normalizedSlotText = normalizeTime(slot.text);
       
       // Check for exact match or partial match
@@ -335,7 +367,7 @@ async function selectTimeSlot(page, slotIndex, specificTime = null) {
       const requestedHour = hourMatch[1];
       const requestedPeriod = hourMatch[2].toUpperCase();
       
-      for (const slot of slotInfos) {
+      for (const slot of finalSlotInfos) {
         const slotMatch = slot.text?.match(/(\d{1,2}):\d{2}\s*(AM|PM)/i);
         if (slotMatch) {
           const slotHour = slotMatch[1];
@@ -356,7 +388,7 @@ async function selectTimeSlot(page, slotIndex, specificTime = null) {
       console.log(`  ⏰ Exact time "${specificTime}" not available, searching for closest slot...`);
       
       // Filter slots that have valid times and calculate differences
-      const slotsWithDiff = slotInfos
+      const slotsWithDiff = finalSlotInfos
         .filter(slot => slot.minutes !== null)
         .map(slot => ({
           ...slot,
@@ -381,8 +413,9 @@ async function selectTimeSlot(page, slotIndex, specificTime = null) {
     console.log(`  ⚠️  Could not find suitable time slot, falling back to index ${slotIndex}`);
   }
   
-  // Fallback to index-based selection
-  const slotToClick = allTimeSlots[Math.min(slotIndex, allTimeSlots.length - 1)];
+  // Fallback to index-based selection using filtered slots
+  const filteredElements = finalSlotInfos.map(slot => slot.element);
+  const slotToClick = filteredElements[Math.min(slotIndex, filteredElements.length - 1)];
   const text = await slotToClick.textContent();
   console.log(`  🖱️  Clicking time slot at index ${slotIndex}: ${text?.trim()}`);
   await slotToClick.click();
